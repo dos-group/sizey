@@ -1,0 +1,14 @@
+pandas
+matplotlib
+numpy
+pandasql
+scikit-learn
+alive-progress
+keyring
+setuptools
+Cython
+pandas
+scikit-learn
+scipy
+statsmodels
+seaborn
