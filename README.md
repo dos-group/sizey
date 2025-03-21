@@ -21,3 +21,5 @@
 - `seed` defines the seed for splitting up the initial data in training and test data and also defines the order of online task input. 
 
 Here is an example command: `./data/trace_methylseq.csv 0.0 True smoothed_mape 1996`
+
+- Check the results in terminal, and in results folder.

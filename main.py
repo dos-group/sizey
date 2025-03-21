@@ -193,7 +193,7 @@ wf_name = sys.argv[1].split("_")[1].split('.')[0]
 
 for task in unique_tasks:
 
-    new_dataF = df2[df2['process'] == task]
+    new_dataF = df2[df2['process'] == task].copy()
     new_dataF['rss'] = pd.to_numeric(new_dataF['rss'], errors='coerce')
     new_dataF['input_size'] = pd.to_numeric(new_dataF['input_size'], errors='coerce')
     new_dataF['memory'] = pd.to_numeric(new_dataF['memory'], errors='coerce')
