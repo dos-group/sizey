@@ -232,7 +232,6 @@ for task in unique_tasks:
     tovar_predictor.initial_model_training(y_train, runtime_train)
 
 
-
     run_online_and_calculate_wastage("Witt-LR", task, 'Default', OFFSET_STRATEGY.STD.name, witt_lr_predictor_std,
                                      X_test, y_test,
                                      runtime_test, user_estimates_test, wf_name,
