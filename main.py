@@ -193,7 +193,7 @@ wf_name = sys.argv[1].split("_")[1].split('.')[0]
 
 for task in unique_tasks:
 
-    new_dataF = df2[df2['process'] == task]
+    new_dataF = df2[df2['process'] == task].copy()
     new_dataF['rss'] = pd.to_numeric(new_dataF['rss'], errors='coerce')
     new_dataF['input_size'] = pd.to_numeric(new_dataF['input_size'], errors='coerce')
     new_dataF['memory'] = pd.to_numeric(new_dataF['memory'], errors='coerce')
@@ -230,7 +230,6 @@ for task in unique_tasks:
 
     tovar_predictor = TovarPredictor()
     tovar_predictor.initial_model_training(y_train, runtime_train)
-
 
 
     run_online_and_calculate_wastage("Witt-LR", task, 'Default', OFFSET_STRATEGY.STD.name, witt_lr_predictor_std,
