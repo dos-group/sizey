@@ -17,8 +17,29 @@ from approach.abstract_predictor import PredictionMethod
 
 
 class TovarPredictor(PredictionMethod):
+    """
+    TovarPredictor is a class that implements a resource allocation prediction model.
+
+    This class extends the `PredictionMethod` base class and provides methods for training, predicting,
+    and updating the model based on historical data. It uses a histogram-based approach to calculate
+    allocations and optimize resource usage.
+
+    Attributes:
+        value_resolution (int): Resolution for the value (e.g., memory in bytes).
+        time_resolution (int): Resolution for the time (e.g., seconds).
+        maximum (Optional[int]): Maximum value seen in the accumulated data points.
+        values (list): List of peak resource usage values.
+        times (list): List of job durations.
+        histogram (dict): Nested dictionary storing the frequency of value-time pairs.
+    """
 
     def __init__(self, value_resolution=1, time_resolution=1):
+        """
+        Initialize the Tovar predictor with specified value and time resolution.
+
+        :param value_resolution: Resolution for the value (e.g., memory in bytes).
+        :param time_resolution: Resolution for the time (e.g., seconds).
+        """
         self.value_resolution = value_resolution
         self.time_resolution = time_resolution
 
@@ -31,13 +52,41 @@ class TovarPredictor(PredictionMethod):
 
     # Instead of x= input_size and y=peak_mem we treat x=peak_mem and y=runtimes
     def initial_model_training(self, memory_peaks, runtimes) -> None:
+        """
+        Initializes the model with training data.
+
+        :param memory_peaks: A pandas Series containing memory peaks (e.g., memory usage in bytes).
+        :param runtimes: A pandas Series containing runtimes (e.g., execution time in seconds).
+        """
         for x in range(len(memory_peaks.values)):
             self.add_data_point(memory_peaks.values[x], runtimes.values[x])
 
     def predict(self, X_test, y_test, user_estimate):
+        """
+        Predicts the first allocation based on the accumulated data.
+
+        :param X_test: Test features (not used in this implementation).
+        :param y_test: Test labels (not used in this implementation).
+        :param user_estimate: User's estimate for the allocation (not used in this implementation).
+
+        :return: A tuple containing the first allocation for 'throughput' and 'waste' modes.
+        """
         return self.first_allocation(mode='waste'), self.first_allocation(mode='waste')
 
     def handle_underprediction(self, input_size:float, predicted: float, user_estimate:float, retry_number: int, actual_memory: float):
+        """
+        Handles underprediction scenarios by adjusting the predicted value based on the maximum seen.
+        If the predicted value is less than the maximum seen, it returns the maximum seen.
+        Otherwise, it returns a fixed value of 128GB memory.
+
+        :param input_size: Size of the input task (not used in this implementation).
+        :param predicted: Predicted value from the model (e.g., memory usage in bytes).
+        :param user_estimate: User's estimate for the task (not used in this implementation).
+        :param retry_number: Number of retries attempted (not used in this implementation).
+        :param actual_memory: Actual memory used for the task (not used in this implementation).
+
+        :return: Adjusted predicted value based on the maximum seen.
+        """
         if predicted < self.maximum_seen:
             return self.maximum_seen
         else:
@@ -46,6 +95,12 @@ class TovarPredictor(PredictionMethod):
     # underpred. aufrufen
 
     def update_model(self, memory_peak: int, runtime: int) -> None:
+        """
+        Updates the model with new training data by adding a new data point.
+
+        :param memory_peak: Peak resource usage of a job (e.g., memory usage in bytes).
+        :param runtime: Duration of the job (e.g., execution time in seconds).
+        """
         self.add_data_point(memory_peak,runtime)
 
     def get_number_subModels(self) -> dict[str, int]:
@@ -61,6 +116,15 @@ class TovarPredictor(PredictionMethod):
     # @endcode
     @property
     def count(self):
+        """
+        Returns the number of data points added to the model.
+
+        This property calculates the total number of values stored in the `values` list,
+        which represents the peak resource usage data points accumulated during the model's operation.
+
+        :return: The number of data points in the `values` list.
+        :rtype: int
+        """
         return len(self.values)
 
     ##
@@ -71,20 +135,32 @@ class TovarPredictor(PredictionMethod):
     # @endcode
     @property
     def maximum_seen(self):
+        """
+        Returns the maximum value seen in the accumulated data points.
+
+        This property retrieves the highest peak resource usage value stored in the `maximum` attribute,
+        which is updated during the addition of data points.
+
+        :return: The maximum peak resource usage value.
+        :rtype: int or None
+        """
         return self.maximum
 
-    ##
-    # Add a data point.
-    # @param self                Reference to the current object.
-    # @param value               Peak resource usage of a job.
-    # @param time                Duration of the job.
-    #
-    # Units should be consistent across data points.
-    #
-    # @code
-    # print fa.add_data_point(value = 50, time = 360)
-    # @endcode
     def add_data_point(self, value, time):
+        """
+        Adds a data point to the model.
+
+        This method updates the `values` and `times` lists with the provided data point
+        and organizes the data into buckets based on the specified resolutions. It also
+        updates the `maximum` attribute and the `histogram` dictionary to reflect the new data.
+
+        Units should be consistent across data points.
+
+        :param value: Peak resource usage of a job.
+        :param time: Duration of the job.
+
+        :return: The updated count of occurrences for the given value-time bucket.
+        """
         self.values.append(value)
         self.times.append(time)
 
@@ -104,16 +180,18 @@ class TovarPredictor(PredictionMethod):
 
         return self.histogram[value_bucket][time_bucket]
 
-    ##
-    # Compute and return the first allocation.
-    #
-    # @param self                Reference to the current object.
-    # @param mode                Optimization mode. One of 'throughput', 'waste', or 'fixed'.
-    #
-    # @code
-    # v = fa.first_allocation(mode = 'throughput')
-    # @endcode
     def first_allocation(self, mode='throughput'):
+        """
+        Computes and returns the first allocation based on the optimization mode.
+
+        This method calculates the first allocation using one of three modes: 'throughput',
+        'waste', or 'fixed'. The allocation is determined based on the accumulated data points
+        and the selected optimization strategy.
+
+        :param mode: Optimization mode. One of 'throughput', 'waste', or 'fixed'.
+
+        :return: The computed allocation value based on the selected mode.
+        """
         valid_modes = ['throughput', 'waste', 'fixed']
 
         if mode == 'fixed':
@@ -125,13 +203,18 @@ class TovarPredictor(PredictionMethod):
         else:
             raise ValueError('mode not one of %s', ','.join(valid_modes))
 
-    ##
-    # Return the waste (unit x time) that would be produced if the accumulated
-    # values were run under the given allocation.
-    #
-    # @param self                Reference to the current object.
-    # @param allocation          Value of allocation to test.
     def waste(self, allocation):
+        """
+        Calculates the waste produced under a given allocation.
+
+        This method computes the total waste (unit x time) that would result if the accumulated
+        values were run under the specified allocation. Waste is calculated based on the difference
+        between the allocation and the actual resource usage.
+
+        :param allocation: Value of allocation to test.
+
+        :return: The total waste produced under the given allocation.
+        """
         waste = 0
         for i in range(0, len(self.values)):
             v = self.values[i]
@@ -143,12 +226,15 @@ class TovarPredictor(PredictionMethod):
                 waste += t * (allocation + self.maximum_seen - v)
         return waste
 
-    ##
-    # Return the usage (unit x time) if the accumulated values were run under
-    # the given allocation.
-    #
-    # @param self                Reference to the current object.
     def usage(self):
+        """
+        Calculates the total resource usage under the accumulated data points.
+
+        This method computes the total usage (unit x time) based on the accumulated
+        values and times stored in the model.
+
+        :return: The total resource usage (unit x time).
+        """
         usage = 0
         for i in range(0, len(self.values)):
             v = self.values[i]
@@ -156,25 +242,34 @@ class TovarPredictor(PredictionMethod):
             usage += t * v
         return usage
 
-    ##
-    # Return the percentage of wasted resources that would be produced if the accumulated
-    # values were run under the given allocation.
-    #
-    # @param self                Reference to the current object.
-    # @param allocation          Value of allocation to test.
     def wastepercentage(self, allocation):
+        """
+        Calculates the percentage of wasted resources under a given allocation.
+
+        This method computes the percentage of wasted resources based on the total waste
+        and usage for the accumulated data points under the specified allocation.
+
+        :param allocation: Value of allocation to test.
+
+        :return: The percentage of wasted resources.
+        """
         waste = self.waste(allocation)
         usage = self.usage()
 
         return (100.0 * waste) / (waste + usage)
 
-    ##
-    # Return the throughput of a single node if the accumulated values values
-    # were run under the given allocation. Assumes an infinite number of tasks.
-    #
-    # @param self                Reference to the current object.
-    # @param allocation          Value of allocation to test.
     def throughput(self, allocation):
+        """
+        Calculates the throughput of a single node under a given allocation.
+
+        This method computes the throughput (tasks per unit time) for a single node
+        based on the accumulated data points and the specified allocation. It assumes
+        an infinite number of tasks.
+
+        :param allocation: Value of allocation to test.
+
+        :return: The throughput of a single node under the given allocation.
+        """
         maximum = float(self.maximum_seen)
 
         tasks = 0
@@ -193,13 +288,18 @@ class TovarPredictor(PredictionMethod):
 
         return tasks / total_time
 
-    ##
-    # Return the number of tasks that would be retried if the accumulated
-    # values were run under the given allocation.
-    #
-    # @param self                Reference to the current object.
-    # @param allocation          Value of allocation to test.
     def retries(self, allocation):
+        """
+        Calculates the number of tasks that would be retried under a given allocation.
+
+        This method computes the number of tasks that would require retries if the accumulated
+        values were run under the specified allocation. A retry is required if the resource usage
+        exceeds the allocation.
+
+        :param allocation: Value of allocation to test.
+
+        :return: The number of tasks that would be retried.
+        """
         retries = 0
         for v in self.values:
             if v > allocation:
@@ -207,6 +307,15 @@ class TovarPredictor(PredictionMethod):
         return retries
 
     def __first_allocation_by_waste(self):
+        """
+        Computes the first allocation based on the waste optimization strategy.
+
+        This private method calculates the first allocation by minimizing the expected waste
+        using the accumulated data points. It uses a mathematical model to determine the optimal
+        allocation value.
+
+        :return: The computed allocation value based on the waste optimization strategy.
+        """
         values = self.histogram.keys()
 
         # computation below is easier if values are sorted in reversed.
@@ -242,6 +351,15 @@ class TovarPredictor(PredictionMethod):
         return a
 
     def __first_allocation_by_throughput(self):
+        """
+        Computes the first allocation based on the throughput optimization strategy.
+
+        This private method calculates the first allocation by maximizing the expected throughput
+        using the accumulated data points. It uses a mathematical model to determine the optimal
+        allocation value.
+
+        :return: The computed allocation value based on the throughput optimization strategy.
+        """
         values = self.histogram.keys()
 
         # computation below is easier if values are sorted in reversed.
@@ -286,12 +404,32 @@ class TovarPredictor(PredictionMethod):
         return a
 
     def __count_of_value(self, value):
+        """
+        Counts the occurrences of a specific value in the histogram.
+
+        This private method calculates the total count of occurrences for a given value
+        across all time buckets in the histogram.
+
+        :param value: The value to count occurrences for.
+
+        :return: The total count of occurrences for the given value.
+        """
         count = 0
         for time in self.histogram[value].keys():
             count += self.histogram[value][time]
         return count
 
     def __accum_times_per_value(self, value):
+        """
+        Accumulates the total time for a specific value in the histogram.
+
+        This private method calculates the total time associated with a given value
+        across all time buckets in the histogram.
+
+        :param value: The value to accumulate time for.
+
+        :return: The total accumulated time for the given value.
+        """
         total_time = 0
         for time in self.histogram[value].keys():
             count = self.histogram[value][time]

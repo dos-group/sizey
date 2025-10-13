@@ -9,6 +9,7 @@ from functools import partial
 from typing import Callable, List, Optional
 import pandas as pd
 import numpy as np
+import logging
 import scipy.optimize as spo
 import scipy.stats as sps
 import statsmodels.formula.api as smf
@@ -23,12 +24,42 @@ __email__ = 'wittcarx@informatik.hu-berlin.de'
 
 
 class LowWastageRegression:
-    """ If the multiplier for failed attempts is optimized, limit it to this value, e.g., increase allocation by at least 50% upon each failure."""
+    """
+    A class to compute wastage-minimizing first allocations for jobs given historical data about their resource usage.
+
+    This class normalizes training data, trains multiple models, and predicts resource allocations
+    using an ensemble of trained models.
+
+    Attributes:
+        min_base (float): Minimum multiplier for failed attempts, e.g., increase allocation by at least 50% upon each failure.
+        min_allocation (float): Minimum allocation for resources.
+        relative_time_to_failure (float): Relative time to failure for resource allocation.
+        predictor_column (str): Column name for predictor variable in the training data.
+        resource_column (str): Column name for resource usage variable in the training data.
+        run_time_column (str): Column name for runtime variable in the training data.
+        prediction_column (str): Column name for predicted allocations.
+        shift (dict): Dictionary storing the shift values for normalization.
+        scale (dict): Dictionary storing the scale values for normalization.
+        initial_ptp (dict): Dictionary storing the peak-to-peak values for normalization.
+        unscaled_mean_predictor (float): Mean value of the predictor column before scaling.
+        data (pd.DataFrame): Normalized training data.
+        models (list): List of trained models.
+    """
+
     min_base = 1.5
 
     def __init__(self, training_data: pd.DataFrame, predictor_column: str, resource_column: str, run_time_column: str,
                  relative_time_to_failure: float, min_allocation: float):
+        """
+        Initializes the LowWastageRegression object and trains multiple models.
 
+        :param training_data: DataFrame containing historical resource usage data.
+        :param predictor_column: Column name for predictor variable in the training data.
+        :param resource_column: Column name for resource usage variable in the training data.
+        :param run_time_column: Column name for runtime variable in the training data.
+        :param relative_time_to_failure: Relative time to failure for resource allocation.
+        :param min_allocation: Minimum allocation for resources.
+        """
         self.min_allocation = min_allocation
         self.relative_time_to_failure = relative_time_to_failure
 
@@ -60,9 +91,15 @@ class LowWastageRegression:
             self.training_data = self.data.sample(frac=0.7, random_state=i)
             self.models.append(self.__train__(optimize_base=False))
             # print(self.models[1.0][0].slope)
-        print(self.models)
+        logging.debug(self.models)
 
     def predict(self, data: pd.DataFrame):
+        """
+        Predicts resource allocations for the given data using the trained models.
+
+        :param data: DataFrame containing data for prediction.
+        :return: Series containing predicted allocations.
+        """
         df = data.copy()
         self.__transform__(df)
 
@@ -76,24 +113,45 @@ class LowWastageRegression:
         return df[self.prediction_column]
 
     def __transform__(self, data: pd.DataFrame):
+        """
+        Normalizes the given data using the stored shift and scale values.
+
+        :param data: DataFrame to be normalized.
+        """
         for column in [self.predictor_column, self.resource_column]:
             data[column] = (data[column] - self.shift[column]) / self.scale[column]
 
     def __inverse_transform__(self, data: pd.DataFrame):
+        """
+        Reverts the normalization of the given data.
+
+        :param data: DataFrame to be reverted to original scale.
+        """
         for column in [self.predictor_column, self.resource_column]:
             data[column] = data[column] * self.scale[column] + self.shift[column]
         data[self.prediction_column] = data[self.prediction_column] * self.scale[self.resource_column] + self.shift[
             self.resource_column]
 
     def __predictor_varies_enough__(self):
+        """
+        Checks if the predictor variable varies enough to justify training.
+
+        :return: True if the predictor variable varies sufficiently, False otherwise.
+        """
         return self.initial_ptp[self.predictor_column] > 0.05 * self.unscaled_mean_predictor
 
     def __quantile_regression__(self, steps: int = 5, max_iter=50):
         """
-		Compute slopes and intercepts approximately (low number of iterations) corresponding to different quantile regression lines.
-		Uses a quadratic interpolation between 0.5 (median) and 0.9999 to obtain more candidates at the high end of the range.
-		"""
+        Compute slopes and intercepts approximately using quantile regression.
 
+        This method calculates regression lines corresponding to different quantiles of the data.
+        It uses quadratic interpolation between 0.5 (median) and 0.9999 to obtain more candidates
+        at the high end of the range.
+
+        :param steps: Number of quantile steps to compute (default is 5).
+        :param max_iter: Maximum number of iterations for the quantile regression fitting (default is 50).
+        :return: A list of LinearModel objects representing the computed regression lines.
+        """
         # e.g., [0.99, 0.91, 0.75, 0.51] for steps = 4
         quantile_candidates = [1 - a ** 2 for a in np.linspace(0.01, 0.7, steps)]
 
@@ -124,7 +182,15 @@ class LowWastageRegression:
         return parameters_tried
 
     def __train__(self, optimize_base: bool):
+        """
+        Train the model using either linear or quantile regression.
 
+        This method decides whether to use linear regression or quantile regression based on
+        the variability of the predictor variable.
+
+        :param optimize_base: Whether to optimize the base parameter during training.
+        :return: The best model parameters and their associated wastage.
+        """
         if not self.__predictor_varies_enough__():
             # return self.__train_quantile__() NOT commenting this out and substituting it leads to a failure because methods returns NONE
             return self.__train_linear__(optimize_base=optimize_base)
@@ -132,19 +198,24 @@ class LowWastageRegression:
             return self.__train_linear__(optimize_base=optimize_base)
 
     def __train_quantile__(self):
+        """
+        Placeholder method for quantile regression training.
+
+        This method is currently not implemented.
+        """
         pass
 
     def __train_linear__(self, optimize_base: bool = False, max_iter_cobyla=200):
         """
-		Use Constrained Optimization by Linear Approximation to find a good slope, intercept, and optionally, base
-		:param data: Needs the following columns 'rss' (peak memory usage), 'run_time', 'input_size' (zero allowed, but not NaN)
-		:param initial_solution: A function that returns initial model parameters from a training data set (e.g., initial_solution_zero_max or initial_solution_99percentile)
-		:param wastage_func: Computes the over- and under-sizing wastage for a given first allocation (set column 'first_allocation' on the data frame)
-		:param optimize_base:
-		:param exponential_base: Base for exponential failure handling strategy. If None given, the base is optimized for as well. (E.g., double allocation after each failure, add 50%, etc.)
-		:param min_allocation: Minimum memory to allocate to a task. Could be optimized as well.
-		:return: the best found model parameters, the according wastage, the wastage function (needed for evaluation set, and changes during optimization if base is not specified), the tried model parameters, and the resulting wastages
-		"""
+        Train the model using linear regression with optional base optimization.
+
+        This method uses Constrained Optimization by Linear Approximation (COBYLA) to find
+        the best slope, intercept, and optionally, base for the linear model.
+
+        :param optimize_base: Whether to optimize the base parameter during training (default is False).
+        :param max_iter_cobyla: Maximum number of iterations for the COBYLA optimizer (default is 200).
+        :return: The best model parameters and their associated wastage.
+        """
 
         parameters_tried = []
         wastages_tried = []
@@ -172,6 +243,12 @@ class LowWastageRegression:
         base_constraints = ({'type': 'ineq', 'fun': lambda x: x[2] - self.min_base}) if optimize_base else ()
 
         def wastage(model_params: [float]):
+            """
+            Compute the wastage for a given set of model parameters.
+
+            :param model_params: List containing slope, intercept, and optionally base.
+            :return: Total wastage (oversizing + undersizing).
+            """
             params = self.__linear_model__(slope=model_params[0], intercept=model_params[1],
                                            base=model_params[2] if optimize_base else 2)
 
@@ -207,21 +284,58 @@ class LowWastageRegression:
         return best_parameters, lowest_wastage
 
     def __linear_model__(self, slope, intercept, base):
+        """
+        Create a LinearModel object with the specified parameters.
+
+        :param slope: Slope of the linear model.
+        :param intercept: Intercept of the linear model.
+        :param base: Base for exponential failure handling strategy.
+        :return: A LinearModel object.
+        """
         return LinearModel(slope=slope, intercept=intercept, base=base, predictor_column=self.predictor_column,
                            min_allocation=self.min_allocation)
 
     @property
     def model(self):
+        """
+        Get the best model based on quality.
+
+        :return: The LinearModel object with the highest quality.
+        """
         return max(self.models, key=lambda m: m[1].maq)[0]
 
     @property
     def quality(self):
+        """
+        Get the quality of the best model.
+
+        :return: The quality object associated with the best model.
+        """
         return max(self.models, key=lambda m: m[1].maq)[1]
 
 
 class LinearModel:
+    """
+    Represents a linear model for resource allocation predictions.
+
+    Attributes:
+        slope (float): The slope of the linear model.
+        intercept (float): The intercept of the linear model.
+        predictor_column (Optional[str]): The column name of the predictor variable in the data.
+        base (Optional[float]): The base value for exponential failure handling strategy.
+        min_allocation (Optional[float]): The minimum allocation value to ensure resources are not under-allocated.
+    """
     def __init__(self, slope: float, intercept: float, predictor_column: Optional[str] = None,
                  base: Optional[float] = None, min_allocation: Optional[float] = None):
+        """
+        Initializes the LinearModel object with the specified parameters.
+
+        :param slope: The slope of the linear model.
+        :param intercept: The intercept of the linear model.
+        :param predictor_column: The column name of the predictor variable in the data.
+        :param base: The base value for exponential failure handling strategy.
+        :param min_allocation: The minimum allocation value to ensure resources are not under-allocated.
+        """
         self.slope = slope
         self.intercept = intercept
         self.min_allocation = min_allocation
@@ -229,15 +343,38 @@ class LinearModel:
         self.predictor_column = predictor_column
 
     def apply(self, data: pd.DataFrame):
+        """
+        Applies the linear model to the given data to compute resource allocations.
+
+        :param data: A pandas DataFrame containing the predictor column.
+        :return: A numpy array of computed resource allocations, clipped to ensure a minimum allocation.
+        """
         return np.clip(data[self.predictor_column] * self.slope + self.intercept, a_min=self.min_allocation, a_max=None)
 
     def __str__(self):
+        """
+        Returns a string representation of the LinearModel object.
+
+        :return: A formatted string describing the slope, intercept, base, and minimum allocation of the model.
+        """
         return "slope {:.2f} intercept {:.2f} base {:.2f} minimum allocation {:.2f}".format(self.slope, self.intercept,
                                                                                             self.base,
                                                                                             self.min_allocation)
 
 
-def main_witt_wastage(workflow: str, seed: int, error_metric: str, alpha: float, use_softmax: bool):
+def main_witt_wastage(workflow: str, seed: int, error_metric: str, alpha: float, use_softmax: bool, use_online_grid: bool):
+    """
+    Main function to compute wastage-minimizing first allocations for tasks in a workflow.
+
+    This function processes historical resource usage data, trains a LowWastageRegression model,
+    evaluates its predictions, and writes the results to CSV files.
+
+    :param workflow: Name of the workflow to process.
+    :param seed: Random seed for reproducibility.
+    :param error_metric: Metric used to evaluate prediction errors.
+    :param alpha: Alpha parameter for smoothing or weighting predictions.
+    :param use_softmax: Boolean flag indicating whether to use softmax in predictions.
+    """
     import time
 
 
@@ -266,13 +403,13 @@ def main_witt_wastage(workflow: str, seed: int, error_metric: str, alpha: float,
 
                             if check_substring_in_csv(workflow, alpha, use_softmax_single, error_metric, "Witt-Ice", task,
                                                    "Default",
-                                                   "Default", seed):
+                                                   "Default", seed, use_online_grid):
                                 continue
 
                             REL_TTF = 1.0
                             BASE = 2
                             MIN_ALLOC = 0.01
-                            print("Task: " + task)
+                            logging.debug("Task: " + task)
                             df = df_all_tasks[df_all_tasks['process'] == task]
 
                             if (len(df) < 34):
@@ -288,10 +425,10 @@ def main_witt_wastage(workflow: str, seed: int, error_metric: str, alpha: float,
                             lwr = LowWastageRegression(training, predictor_column='input_size', resource_column='peak_rss',
                                                        run_time_column='realtime', relative_time_to_failure=1., min_allocation=0.01)
 
-                            print("best_params: {0}".format(lwr.model))
-                            print("maq: {:.2f}% failures: {:.2f}%".format(lwr.quality.maq * 100, lwr.quality.failures / df.size * 100))
+                            logging.debug("best_params: {0}".format(lwr.model))
+                            logging.debug("maq: {:.2f}% failures: {:.2f}%".format(lwr.quality.maq * 100, lwr.quality.failures / df.size * 100))
                             time_needed = time.time() - before
-                            print("\ntime needed: {0}".format(time_needed))
+                            logging.debug("\ntime needed: {0}".format(time_needed))
 
                             evaluation = df.drop(training.index)
                             evaluation['first_allocation'] = lwr.predict(evaluation)
@@ -299,7 +436,6 @@ def main_witt_wastage(workflow: str, seed: int, error_metric: str, alpha: float,
 
                             w = Wastage.exponential(evaluation, 1.0, resource_column='peak_rss', first_allocation_column='first_allocation',
                                                     run_time_column='realtime', workflow=workflow)
-                            print(w)
 
                             for index, row in evaluation.iterrows():
                                 write_single_task_to_csv("Witt-Ice", "Default", "Default", workflow, "smoothed_mape", True,
@@ -307,10 +443,8 @@ def main_witt_wastage(workflow: str, seed: int, error_metric: str, alpha: float,
                                                          row["Wastage_GBh"], row["Predictions"], row["peak_rss"],
                                                          row["first_allocation"], len(row["Predictions"])-1, alpha, row["realtime"], len(row["Predictions"])-1, seed)
 
-                            write_result_to_csv("Witt-Ice", "Default", "Default", task,
-                                                w.wastage_GB * 1000000000, w.wastage_GB * 1000000, w.wastage_GB, w.wastage_GBh * 1000000,
-                                                w.wastage_GBh,
-                                                w.failures, w.runtime_h, "1", workflow, time_needed, "1.0", alpha, use_softmax_single, {}, error_metric, "-1", seed)
+                            write_result_to_csv("Witt-Ice", "Default", "Default", task, w.wastage_GB, w.wastage_GBh,
+                                                w.failures, w.runtime_h, "1", workflow, time_needed, "1.0", alpha, use_softmax_single, {}, error_metric, "-1", seed, use_online_grid)
 
         #training.plot.scatter(x='input_size', y='rss')
         #import matplotlib.pyplot as plt
